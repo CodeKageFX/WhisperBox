@@ -116,14 +116,14 @@ useEffect(() => {
 
 const userId = activeConversation?.user_id;
 
+const hasLoadedRef = useRef<string | null>(null);
+
 useEffect(() => {
     if (!userId) return;
-
-    const loadMessages = async () => {
-        await fetchMessages(userId);
-    };
-
-    loadMessages();
+    if (hasLoadedRef.current === userId) return; // already loaded this convo
+    
+    hasLoadedRef.current = userId;
+    fetchMessages(userId);
 }, [userId, fetchMessages]);
 
     const activeConversationRef = useRef<Conversation | null>(null);
@@ -148,29 +148,42 @@ useEffect(() => {
             };
 
             socket.onmessage = async (event) => {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'message.receive') {
-                    const rawMessage: Message = {
-                        id: data.id,
-                        from_user_id: data.from_user_id,
-                        to_user_id: data.to_user_id,
-                        payload: data.payload,
-                        delivered: data.delivered,
-                        created_at: data.created_at
-                    };
-                    const decryptedMessage = await decryptSingleMessage(rawMessage);
-                    
-                    const currentActive = activeConversationRef.current;
-                    if (currentActive && (rawMessage.from_user_id === currentActive.user_id || rawMessage.to_user_id === currentActive.user_id)) {
-                        setMessages(prev => [...prev, decryptedMessage]);
-                    }
-                    fetchConversations();
-                } else if (data.type === 'message.delivered') {
-                    const { message_id } = data;
-                    setMessages(prev => prev.map(m => m.id === message_id ? { ...m, delivered: true } : m));
-                }
-            };
+    const data = JSON.parse(event.data)
+    console.log('WS received:', data) 
+    
+    if (data.event === 'message.receive') {  // ← event not type
+        const rawMessage: Message = {
+            id: data.id,
+            from_user_id: data.from_user_id,
+            to_user_id: data.to_user_id,
+            payload: data.payload,
+            delivered: data.delivered,
+            created_at: data.created_at
+        }
+        const decryptedMessage = await decryptSingleMessage(rawMessage)
+        const currentActive = activeConversationRef.current
+        if (currentActive && (rawMessage.from_user_id === currentActive.user_id || rawMessage.to_user_id === currentActive.user_id)) {
+            setMessages(prev => [...prev, decryptedMessage])
+        }
+       setConversations(prev => {
+    const partnerId = rawMessage.from_user_id === user?.id 
+        ? rawMessage.to_user_id 
+        : rawMessage.from_user_id
+    const existing = prev.find(c => c.user_id === partnerId)
+    if (existing) {
+        return [
+            { ...existing, last_message_at: rawMessage.created_at },
+            ...prev.filter(c => c.user_id !== partnerId)
+        ]
+    }
+    return prev
+})
+    } else if (data.event === 'message.delivered') {  // ← event not type
+        setMessages(prev => prev.map(m => 
+            m.id === data.message_id ? { ...m, delivered: true } : m
+        ))
+    }
+}
 
             socket.onclose = () => {
                 console.log("WebSocket closed. Attempting to reconnect in 3s...");
@@ -197,33 +210,36 @@ useEffect(() => {
     const ownPubKey = await crypto.importPublicKey(user.public_key!)
     const encrypted = await crypto.encryptMessage(text, recipientPubKey, ownPubKey)
 
-const payload: MessagePayload = {
-    ciphertext: encrypted.encryptedContent,
-    iv: encrypted.iv,
-    encrypted_key: encrypted.encrypted_key,
-    encrypted_key_for_self: encrypted.encrypted_key_for_self,
-    encryptedKey: encrypted.encrypted_key,
-    encryptedKeyForSelf: encrypted.encrypted_key_for_self
-}
-
     // prefer WebSocket, fall back to REST
     if (ws.current?.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify({
-            type: 'message.send',
-            to: activeConversation.user_id,
-            payload
-        }))
+ws.current.send(JSON.stringify({
+    event: 'message.send',  // ← event not type
+    to: activeConversation.user_id,
+    payload: {
+        ciphertext: encrypted.encryptedContent,
+        iv: encrypted.iv,
+        encryptedKey: encrypted.encrypted_key,
+        encryptedKeyForSelf: encrypted.encrypted_key_for_self
+    }
+}))
         // optimistically add to UI
-        const optimistic: DecryptedMessage = {
-            id: globalThis.crypto.randomUUID(),
-            from_user_id: user.id,
-            to_user_id: activeConversation.user_id,
-            payload,
-            delivered: false,
-            created_at: new Date().toISOString(),
-            text
-        }
-        setMessages(prev => [...prev, optimistic])
+    const optimistic: DecryptedMessage = {
+        id: globalThis.crypto.randomUUID(),
+        from_user_id: user.id,
+        to_user_id: activeConversation.user_id,
+        payload: {
+            ciphertext: encrypted.encryptedContent,
+            iv: encrypted.iv,
+            encrypted_key: encrypted.encrypted_key,
+            encrypted_key_for_self: encrypted.encrypted_key_for_self,
+            encryptedKey: encrypted.encrypted_key,
+            encryptedKeyForSelf: encrypted.encrypted_key_for_self
+        },
+        delivered: false,
+        created_at: new Date().toISOString(),
+        text
+    }
+    setMessages(prev => [...prev, optimistic])
     } else {
         // REST fallback
         const sentMessage = await api.sendMessage(
@@ -235,7 +251,17 @@ const payload: MessagePayload = {
         )
         setMessages(prev => [...prev, { ...sentMessage, text }])
     }
-    fetchConversations()
+setConversations(prev => {
+    const existing = prev.find(c => c.user_id === activeConversation.user_id)
+    if (existing) {
+        // move it to top with updated timestamp
+        return [
+            { ...existing, last_message_at: new Date().toISOString() },
+            ...prev.filter(c => c.user_id !== activeConversation.user_id)
+        ]
+    }
+    return prev
+})
 }
 
     const searchUsers = async (q: string) => {
@@ -258,6 +284,13 @@ const payload: MessagePayload = {
         }
     };
 
+    const setActiveConversationSafe = (conversation: Conversation | null) => {
+    if (conversation?.user_id !== activeConversation?.user_id) {
+        hasLoadedRef.current = null; // allow fresh load for new convo
+    }
+    setActiveConversation(conversation);
+};
+
     return (
         <ChatContext.Provider value={{
             conversations,
@@ -265,7 +298,7 @@ const payload: MessagePayload = {
             messages,
             isLoadingConversations,
             isLoadingMessages,
-            setActiveConversation,
+            setActiveConversation: setActiveConversationSafe,
             sendMessage,
             searchUsers,
             startNewConversation

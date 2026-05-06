@@ -2,17 +2,16 @@ import { AuthResponse, UserProfile, Conversation, Message, UserPublicKey, UserPu
 
 const BASE_URL = "https://whisperbox.koyeb.app"
 
+// api.ts
 export function saveToken(token: string) {
-    sessionStorage.setItem("access_token", token)
+    localStorage.setItem("access_token", token)
 }
-
 export function getToken(): string | null {
     if (typeof window === "undefined") return null
-    return sessionStorage.getItem("access_token")
+    return localStorage.getItem("access_token")
 }
-
 export function clearToken() {
-    sessionStorage.removeItem("access_token")
+    localStorage.removeItem("access_token")
 }
 
 export function saveRefreshToken(token: string) {
