@@ -1,74 +1,30 @@
-export async function generateKeyPair(): Promise<CryptoKeyPair> {
+export async function generateKeyPair() {
     const keyPair = await window.crypto.subtle.generateKey(
         {
             name: "RSA-OAEP",
             modulusLength: 2048,
-            publicExponent: new Uint8Array([1, 0, 1]),
-            hash: "SHA-256"
+            hash: "SHA-256",
+            publicExponent: new Uint8Array([1, 0, 1])
         },
         true,
         ["encrypt", "decrypt"]
     )
+
     return keyPair
 }
 
-export async function exportPublicKey(key: CryptoKey): Promise<string> {
-    const exported = await window.crypto.subtle.exportKey(
-        "spki",
-        key
-    )
-    return bufferToBase64(exported)
-}
-
-export async function exportPrivateKey(key: CryptoKey): Promise<string> {
-    const exported = await window.crypto.subtle.exportKey(
-        "pkcs8",
-        key
-    )
-    return bufferToBase64(exported)
-}
-
-export async function importPublicKey(key: string): Promise<CryptoKey> {
-    const exported = await window.crypto.subtle.importKey(
-        "spki",
-        base64ToBuffer(key),
-        {
-            name: "RSA-OAEP",
-            hash: "SHA-256"
-        },
-        true,
-        ["encrypt"]
-    )
-    return exported
-}
-
-export async function importPrivateKey(key: string): Promise<CryptoKey> {
-    const exported = await window.crypto.subtle.importKey(
-        "pkcs8",
-        base64ToBuffer(key),
-        {
-            name: "RSA-OAEP",
-            hash: "SHA-256"
-        },
-        true,
-        ["decrypt"]
-    )
-    return exported
-}
-
 export function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+
+    const bytes =  buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
     let binary = ""
-    for (let i = 0; i < bytes.byteLength; i++) {
+
+    for(let i = 0; i < bytes.byteLength; i++) {
         binary += String.fromCharCode(bytes[i])
     }
     return btoa(binary)
 }
 
 export function base64ToBuffer(base64: string): ArrayBuffer {
-    if (!base64) {
-        throw new Error("base64ToBuffer received undefined or empty input");
-    }
     const binary = atob(base64)
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) {
@@ -77,86 +33,121 @@ export function base64ToBuffer(base64: string): ArrayBuffer {
     return bytes.buffer
 }
 
+export async function exportPublicKey(key: CryptoKey) {
+    const exported = await window.crypto.subtle.exportKey("spki", key)
+
+    return bufferToBase64(exported)
+}
+
+export async function exportPrivateKey(key: CryptoKey) {
+   const exported = await window.crypto.subtle.exportKey("pkcs8", key)
+   return bufferToBase64(exported)
+}
+
+export async function importPublicKey(base64: string): Promise<CryptoKey> {
+    const keyPair = await window.crypto.subtle.importKey(
+        "spki",
+        base64ToBuffer(base64),
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-256"
+        },
+        true,
+        ["encrypt"]
+    )
+
+    return keyPair
+}
+
 export async function encryptMessage(
     message: string,
-    recipientPublicKey: CryptoKey,
-    senderPublicKey: CryptoKey
-): Promise<{
-    encryptedContent: string
-    encrypted_key: string
-    encrypted_key_for_self: string
-    iv: string
-}> {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(message)
-    const iv = window.crypto.getRandomValues(new Uint8Array(12))
+    senderPublicKey: string,
+    recipientPublicKey: string
+) {
+    const encodedMessage = new TextEncoder().encode(message)
 
-    const symKey = await window.crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
+    const aesKey = await window.crypto.subtle.generateKey(
+        {
+            name: "AES-GCM",
+            length: 256
+        },
         true,
         ["encrypt", "decrypt"]
     )
 
-    const exportedSymKey = await window.crypto.subtle.exportKey("raw", symKey)
+    const iv = window.crypto.getRandomValues(new Uint8Array(12))
 
-    // encrypt AES key for recipient
-    const encrypted_key = await window.crypto.subtle.encrypt(
-        { name: "RSA-OAEP" },
-        recipientPublicKey,
-        exportedSymKey
-    )
-
-    // encrypt AES key for self
-    const encrypted_key_for_self = await window.crypto.subtle.encrypt(
-        { name: "RSA-OAEP" },
-        senderPublicKey,
-        exportedSymKey
-    )
-
-    const encryptedContent = await window.crypto.subtle.encrypt(
+    const cipherText = await window.crypto.subtle.encrypt(
         { name: "AES-GCM", iv },
-        symKey,
-        data
+        aesKey,
+        encodedMessage
+    )
+
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey)
+
+    const recipientKey = await importPublicKey(recipientPublicKey)
+
+    const encryptedKey = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        recipientKey,
+        rawAesKey
+    )
+    const senderKey = await importPublicKey(senderPublicKey)
+
+    const encryptedKeyForSelf = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        senderKey,
+        rawAesKey
     )
 
     return {
-        encryptedContent: bufferToBase64(encryptedContent),
-        encrypted_key: bufferToBase64(encrypted_key),
-        encrypted_key_for_self: bufferToBase64(encrypted_key_for_self),
-        iv: bufferToBase64(iv)
+        cipherText: bufferToBase64(cipherText),
+        iv: bufferToBase64(iv),
+        encryptedKey: bufferToBase64(encryptedKey),
+        encryptedKeyForSelf: bufferToBase64(encryptedKeyForSelf)
     }
 }
 
-export async function decryptMessage(encryptedContent: string, encryptedKey: string, iv: string, privateKey: CryptoKey): Promise<string> {
-    const symKeyBytes = await window.crypto.subtle.decrypt(
+export async function decryptMessage(
+    ciphertext: string,
+    iv: string,
+    encryptedKey: string,
+    privateKey: CryptoKey
+) {
+
+    const rawAesKey = await window.crypto.subtle.decrypt(
         { name: "RSA-OAEP" },
         privateKey,
         base64ToBuffer(encryptedKey)
     )
 
-    const symKey = await window.crypto.subtle.importKey(
+    const aesKey = await window.crypto.subtle.importKey(
         "raw",
-        symKeyBytes,
+        rawAesKey,
         { name: "AES-GCM" },
         false,
         ["decrypt"]
     )
 
-    const decryptedData = await window.crypto.subtle.decrypt(
-        {
-            name: "AES-GCM",
-            iv: base64ToBuffer(iv)
-        },
-        symKey,
-        base64ToBuffer(encryptedContent)
+    const decrypted = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: base64ToBuffer(iv) },
+        aesKey,
+        base64ToBuffer(ciphertext)
     )
 
-    const decoder = new TextDecoder()
-    return decoder.decode(decryptedData)
+    return new TextDecoder().decode(decrypted)
 }
 
-export async function deriveWrappingKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+export function generateSalt() {
+    return window.crypto.getRandomValues(new Uint8Array(16))
+}
+
+export async function deriveWrappingKey(
+    password: string,
+    salt: Uint8Array
+): Promise<CryptoKey> {
     const encoder = new TextEncoder()
+
     const keyMaterial = await window.crypto.subtle.importKey(
         "raw",
         encoder.encode(password),
@@ -165,44 +156,46 @@ export async function deriveWrappingKey(password: string, salt: Uint8Array): Pro
         ["deriveKey"]
     )
 
-    return window.crypto.subtle.deriveKey(
+    const derivedKey = await window.crypto.subtle.deriveKey(
         {
             name: "PBKDF2",
-            salt: salt as BufferSource,
+            salt: salt as BufferSource  ,
             iterations: 100000,
-            hash: "SHA-256"
+            hash: "SHA-256",
         },
         keyMaterial,
-        { name: "AES-KW", length: 256 }, // proper AES-KW
+        { name: "AES-KW", length: 256 },
         false,
-        ["wrapKey", "unwrapKey"]  // correct usages for AES-KW
+        ["wrapKey", "unwrapKey"] 
     )
+
+    return derivedKey
 }
 
-// wrapPrivateKey becomes much simpler
-export async function wrapPrivateKey(privateKey: CryptoKey, wrappingKey: CryptoKey): Promise<string> {
+export async function wrapPrivateKey(
+    privateKey: CryptoKey,
+    wrappingKey: CryptoKey
+): Promise<string> {
     const wrapped = await window.crypto.subtle.wrapKey(
         "pkcs8",
         privateKey,
         wrappingKey,
-        "AES-KW"  // no IV needed — AES-KW handles it internally
+        "AES-KW"
     )
     return bufferToBase64(wrapped)
 }
 
-// unwrapPrivateKey also simpler
-export async function unwrapPrivateKey(wrappedKeyBase64: string, wrappingKey: CryptoKey): Promise<CryptoKey> {
+export async function unwrapPrivateKey(
+    wrappedBase64: string,   // from server
+    wrappingKey: CryptoKey   // derived from password + salt
+): Promise<CryptoKey> {
     return window.crypto.subtle.unwrapKey(
-        "pkcs8",
-        base64ToBuffer(wrappedKeyBase64),
-        wrappingKey,
-        "AES-KW",
-        { name: "RSA-OAEP", hash: "SHA-256" },
-        true,
-        ["decrypt"]
+        "pkcs8",                          // format
+        base64ToBuffer(wrappedBase64),    // wrapped key bytes
+        wrappingKey,                      // AES-KW key
+        "AES-KW",                         // unwrapping algorithm
+        { name: "RSA-OAEP", hash: "SHA-256" }, // algorithm of unwrapped key
+        true,                             // extractable
+        ["decrypt"]                       // usages
     )
-}
-
-export function generateSalt(): Uint8Array {
-    return window.crypto.getRandomValues(new Uint8Array(16))
 }

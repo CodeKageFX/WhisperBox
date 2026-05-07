@@ -1,11 +1,11 @@
 function openDB(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open("whisperbox", 1)
+        const request = indexedDB.open("talklowk", 1)
 
+        // runs when database is first created or version changes
         request.onupgradeneeded = (event) => {
             const db = (event.target as IDBOpenDBRequest).result
             db.createObjectStore("keys", { keyPath: "id" })
-            db.createObjectStore("messages", { keyPath: "id" })
         }
 
         request.onsuccess = (event) => {
@@ -18,42 +18,50 @@ function openDB(): Promise<IDBDatabase> {
     })
 }
 
-export async function savePrivateKey(userId: string, privateKey: CryptoKey) {
+export async function savePrivateKeys(userId: string, privateKey: CryptoKey) {
     const db = await openDB()
-    const tx = db.transaction("keys", "readwrite")
-    tx.objectStore("keys").put({ id: userId, privateKey })
+    return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("keys", "readwrite")
+        tx.objectStore("keys").put({id: userId, privateKey})
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+    })
 }
 
-export async function getPrivateKey(userId: string): Promise<CryptoKey | null> {
+export async function getPrivateKeys(userId: string): Promise<CryptoKey | null> {
     const db = await openDB()
     const tx = db.transaction("keys", "readonly")
     const request = tx.objectStore("keys").get(userId)
 
-    return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result?.privateKey ?? null)
-        request.onerror = () => reject(request.error)
+    return new Promise((resolve, reject)=> {
+        request.onsuccess = ()=> resolve(request.result?.privateKey ?? null);
+        request.onerror = ()=> reject(request.error);
     })
 }
 
-export async function clearPrivateKey(userId: string) {
+export async function clearPrivateKeys(userId: string) {
     const db = await openDB()
     const tx = db.transaction("keys", "readwrite")
-    const store = tx.objectStore("keys")
-    store.delete(userId)
+    tx.objectStore("keys").delete(userId)
 }
 
 export async function saveWrappedPrivateKey(userId: string, wrapped: string, salt: string) {
-    const db = await openDB()
-    const tx = db.transaction("keys", "readwrite")
-    tx.objectStore("keys").put({ id: `wrapped_${userId}`, wrapped, salt })
+    const db = await openDB() 
+    return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("keys", "readwrite")
+        tx.objectStore("keys").put({id: `wrapped_${userId}`, wrapped, salt})
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+    })
 }
 
-export async function getWrappedPrivateKey(userId: string): Promise<{ wrapped: string, salt: string } | null> {
+export async function getWrappedPrivateKey(userId: string)  {
     const db = await openDB()
     const tx = db.transaction("keys", "readonly")
     const request = tx.objectStore("keys").get(`wrapped_${userId}`)
+
     return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result ?? null)
-        request.onerror = () => reject(request.error)
-    })
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+    });
 }
