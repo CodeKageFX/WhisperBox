@@ -1,41 +1,34 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Outfit } from 'next/font/google'
+import { TooltipProvider } from "@/components/ui/tooltip";
+import AppInitializer from "@/components/AppInitializer";
 import "./globals.css";
-import { AuthProvider } from "@/context/AuthContext";
-import { ChatProvider } from "@/context/ChatContext";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const font = Outfit({
+    subsets: ['latin'],
+    variable: '--font-main',
+    weight: ['400', '500', '600', '700']
+})
 
 export const metadata: Metadata = {
-  title: "WhisperBox | Secure Messaging",
-  description: "End-to-end encrypted messaging",
+    title: "TalkLowK | Secure Messaging",
+    description: "End-to-end encrypted messaging",
 };
 
 export default function RootLayout({
-  children,
+    children,
 }: Readonly<{
-  children: React.ReactNode;
+    children: React.ReactNode;
 }>) {
-  return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-brand-bg">
-        <AuthProvider>
-          <ChatProvider>
-            {children}
-          </ChatProvider>
-        </AuthProvider>
-      </body>
-    </html>
-  );
+    return (
+        <html lang="en" className={`${font.variable} h-full antialiased`}>
+            <body className={`${font.className} min-h-full flex flex-col`}>
+                <TooltipProvider>
+                    <AppInitializer>
+                        {children}
+                    </AppInitializer>
+                </TooltipProvider>
+            </body>
+        </html>
+    );
 }
